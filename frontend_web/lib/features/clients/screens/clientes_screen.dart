@@ -54,7 +54,7 @@ class _ClientesScreenState extends State<ClientesScreen> {
 
     if (ok != true) return;
     try {
-      final created = await _service.crearCliente(nombreCliente: nombreController.text, email: correoController.text);
+      final created = await _service.crearCliente(nombreCliente: nombreController.text, correo: correoController.text);
       if (!mounted) return;
       if (created) {
         await _load();
@@ -82,10 +82,52 @@ class _ClientesScreenState extends State<ClientesScreen> {
                   final item = _items[index] as Map<String, dynamic>;
                   return EntityCard(
                     title: item['nombre_cliente'] ?? '---',
-                    subtitle: item['email'] ?? '',
+                    subtitle: item['correo'] ?? '',
                     icon: Icons.person,
-                    onEdit: () {},
-                    onDelete: () {},
+                    onEdit: () async {
+                      // mostrar dialogo de edición simple
+                      final nombreCtrl = TextEditingController(text: item['nombre_cliente'] ?? '');
+                      final correoCtrl = TextEditingController(text: item['correo'] ?? '');
+                      final okEdit = await showDialog<bool>(
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                          title: const Text('Editar cliente'),
+                          content: Column(mainAxisSize: MainAxisSize.min, children: [
+                            TextField(controller: nombreCtrl, decoration: const InputDecoration(labelText: 'Nombre')),
+                            TextField(controller: correoCtrl, decoration: const InputDecoration(labelText: 'Email')),
+                          ]),
+                          actions: [
+                            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+                            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Guardar'))
+                          ],
+                        ),
+                      );
+                      if (okEdit == true) {
+                        final success = await _service.actualizarCliente(
+                          idCliente: item['id_cliente'] as int,
+                          nombreCliente: nombreCtrl.text,
+                          correo: correoCtrl.text,
+                        );
+                        if (success) await _load();
+                      }
+                    },
+                    onDelete: () async {
+                      final confirm = await showDialog<bool>(
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                          title: const Text('Eliminar cliente'),
+                          content: const Text('¿Confirma eliminar este cliente?'),
+                          actions: [
+                            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('No')),
+                            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Sí'))
+                          ],
+                        ),
+                      );
+                      if (confirm == true) {
+                        final deleted = await _service.eliminarCliente(idCliente: item['id_cliente'] as int);
+                        if (deleted) await _load();
+                      }
+                    },
                   );
                 },
               ),

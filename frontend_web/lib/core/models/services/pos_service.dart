@@ -113,7 +113,23 @@ class PosService {
     throw Exception('Error al obtener clientes: ${response.body}');
   }
 
-  Future<bool> crearCliente({required String nombreCliente, String? direccion, String? telefono, String? email, String? rfc, String? cp}) async {
+  // Obtener logs de Database Mail (Admin)
+  Future<List<dynamic>> getMailLog() async {
+    final token = await _getToken();
+    if (token == null) throw Exception('No autenticado.');
+
+    final response = await http.get(Uri.parse('$_baseUrl/mail/log'), headers: {
+      'Content-Type': 'application/json; charset=UTF-8',
+      'Authorization': 'Bearer $token',
+    });
+
+    if (response.statusCode == 200) {
+      return json.decode(response.body) as List<dynamic>;
+    }
+    throw Exception('Error al obtener mail log: ${response.body}');
+  }
+
+  Future<bool> crearCliente({required String nombreCliente, String? direccion, String? telefono, String? correo, String? rfc, String? cp}) async {
     final token = await _getToken();
     if (token == null) throw Exception('No autenticado.');
 
@@ -121,7 +137,7 @@ class PosService {
       'nombre_cliente': nombreCliente,
       'direccion': direccion,
       'telefono': telefono,
-      'email': email,
+      'correo': correo,
       'rfc': rfc,
       'cp': cp,
     };
@@ -132,6 +148,39 @@ class PosService {
     }, body: json.encode(body));
 
     return response.statusCode == 201;
+  }
+
+  // Actualizar cliente
+  Future<bool> actualizarCliente({required int idCliente, required String nombreCliente, String? direccion, String? telefono, String? correo, String? rfc}) async {
+    final token = await _getToken();
+    if (token == null) throw Exception('No autenticado.');
+
+    final body = {
+      'nombre_cliente': nombreCliente,
+      'direccion': direccion,
+      'telefono': telefono,
+      'correo': correo,
+      'rfc': rfc,
+    };
+
+    final response = await http.put(Uri.parse('$_baseUrl/clientes/$idCliente'), headers: {
+      'Content-Type': 'application/json; charset=UTF-8',
+      'Authorization': 'Bearer $token',
+    }, body: json.encode(body));
+
+    return response.statusCode == 200;
+  }
+
+  // Eliminar cliente
+  Future<bool> eliminarCliente({required int idCliente}) async {
+    final token = await _getToken();
+    if (token == null) throw Exception('No autenticado.');
+
+    final response = await http.delete(Uri.parse('$_baseUrl/clientes/$idCliente'), headers: {
+      'Authorization': 'Bearer $token',
+    });
+
+    return response.statusCode == 200;
   }
 
   // 5. proveedores
@@ -170,6 +219,82 @@ class PosService {
     }, body: json.encode(body));
 
     return response.statusCode == 201;
+  }
+
+  // Crear producto (Admin)
+  Future<int?> crearProducto({
+    required String codigoProducto,
+    required String nombreProducto,
+    required double precioVenta,
+    double? precioCompra,
+    int? idCategoria,
+    int? idMarca,
+    String? urlImagen,
+    int? stockMinimo,
+    bool? activo,
+  }) async {
+    final token = await _getToken();
+    if (token == null) throw Exception('No autenticado.');
+
+    final body = {
+      'codigo_producto': codigoProducto,
+      'nombre_producto': nombreProducto,
+      'precio_venta': precioVenta,
+      'precio_compra': precioCompra,
+      'id_categoria': idCategoria,
+      'id_marca': idMarca,
+      'url_imagen': urlImagen,
+      'stock_minimo': stockMinimo,
+      'activo': activo == null ? 1 : (activo ? 1 : 0),
+    };
+
+    final response = await http.post(Uri.parse('$_baseUrl/productos'), headers: {
+      'Content-Type': 'application/json; charset=UTF-8',
+      'Authorization': 'Bearer $token',
+    }, body: json.encode(body));
+
+    if (response.statusCode == 201) {
+      final decoded = json.decode(response.body);
+      return decoded['id_producto'] as int?;
+    }
+    throw Exception('Error al crear producto: ${response.body}');
+  }
+
+  // Actualizar producto (Admin)
+  Future<bool> actualizarProducto({
+    required int idProducto,
+    required String codigoProducto,
+    required String nombreProducto,
+    required double precioVenta,
+    double? precioCompra,
+    int? idCategoria,
+    int? idMarca,
+    String? urlImagen,
+    int? stockMinimo,
+    bool? activo,
+  }) async {
+    final token = await _getToken();
+    if (token == null) throw Exception('No autenticado.');
+
+    final body = {
+      'codigo_producto': codigoProducto,
+      'nombre_producto': nombreProducto,
+      'precio_venta': precioVenta,
+      'precio_compra': precioCompra,
+      'id_categoria': idCategoria,
+      'id_marca': idMarca,
+      'url_imagen': urlImagen,
+      'stock_minimo': stockMinimo,
+      'activo': activo == null ? 1 : (activo ? 1 : 0),
+      'id_usuario_app': null,
+    };
+
+    final response = await http.put(Uri.parse('$_baseUrl/productos/$idProducto'), headers: {
+      'Content-Type': 'application/json; charset=UTF-8',
+      'Authorization': 'Bearer $token',
+    }, body: json.encode(body));
+
+    return response.statusCode == 200;
   }
 
   // 6. historial de ventas

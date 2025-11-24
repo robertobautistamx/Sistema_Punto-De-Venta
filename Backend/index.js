@@ -153,11 +153,111 @@ app.get('/api/productos', authMiddleware, async (req, res) => {
     const request = pool.request();
     const result = await request.execute('sp_ObtenerProductos');
     
-    res.status(200).json(result.recordset); // Devuelve la lista de productos
+    res.status(200).json(result.recordset); // Devuelve la lista de productos (incluye url_imagen y stock_minimo si el SP fue actualizado)
   
   } catch (error) {
     console.error('Error en /api/productos:', error.message);
     res.status(500).json({ error: 'Error al obtener productos', detalle: error.message });
+  }
+});
+
+// ENDPOINT: Crear producto (Admin)
+app.post('/api/productos', authMiddleware, requireRole('Administrador'), async (req, res) => {
+  const {
+    codigo_producto,
+    nombre_producto,
+    precio_venta,
+    precio_compra,
+    id_categoria,
+    id_marca,
+    url_imagen,
+    stock_minimo,
+    activo
+  } = req.body;
+
+  if (!nombre_producto || !codigo_producto) return res.status(400).json({ error: 'Faltan campos obligatorios: nombre_producto o codigo_producto' });
+
+  try {
+    const request = pool.request();
+    request.input('codigo_producto', sql.VarChar, codigo_producto);
+    request.input('nombre_producto', sql.VarChar, nombre_producto);
+    request.input('precio_venta', sql.Decimal(10,2), precio_venta ?? 0);
+    request.input('precio_compra', sql.Decimal(10,2), precio_compra ?? 0);
+    request.input('id_categoria', sql.Int, id_categoria ?? null);
+    request.input('id_marca', sql.Int, id_marca ?? null);
+    request.input('url_imagen', sql.VarChar, url_imagen ?? null);
+    request.input('stock_minimo', sql.Int, stock_minimo ?? 5);
+    request.input('activo', sql.Bit, (typeof activo === 'boolean') ? activo : (activo === 1 ? true : true));
+
+    // Intentamos usar un SP si existe `sp_CrearProducto`, si no, hacemos INSERT directo
+    try {
+      const spRes = await request.execute('sp_CrearProducto');
+      return res.status(201).json({ mensaje: 'Producto creado (SP)', id_producto: spRes.recordset[0]?.id_producto_creado ?? null });
+    } catch (spErr) {
+      // SP no existe: fallback a INSERT manual
+    }
+
+    const insertQ = `INSERT INTO productos (codigo_producto, nombre_producto, precio_venta, precio_compra, id_categoria, id_marca, url_imagen, stock_minimo, activo)
+                     OUTPUT INSERTED.id_producto
+                     VALUES (@codigo_producto, @nombre_producto, @precio_venta, @precio_compra, @id_categoria, @id_marca, @url_imagen, @stock_minimo, @activo)`;
+
+    const result = await request.query(insertQ);
+    res.status(201).json({ mensaje: 'Producto creado', id_producto: result.recordset[0].id_producto });
+  } catch (error) {
+    console.error('Error en POST /api/productos:', error.message);
+    res.status(500).json({ error: 'Error al crear producto', detalle: error.message });
+  }
+});
+
+// ENDPOINT: Actualizar producto (Admin)
+app.put('/api/productos/:id', authMiddleware, requireRole('Administrador'), async (req, res) => {
+  const id = parseInt(req.params.id);
+  const {
+    nombre_producto,
+    codigo_producto,
+    precio_venta,
+    precio_compra,
+    id_categoria,
+    id_marca,
+    url_imagen,
+    stock_minimo,
+    activo,
+    id_usuario_app
+  } = req.body;
+
+  if (!id) return res.status(400).json({ error: 'ID de producto inválido' });
+
+  try {
+    const request = pool.request();
+    // Si el SP `sp_ActualizarProducto` fue actualizado a aceptar los nuevos parámetros, lo llamamos
+    request.input('id_producto', sql.Int, id);
+    request.input('nombre_producto', sql.VarChar, nombre_producto);
+    request.input('codigo_producto', sql.VarChar, codigo_producto);
+    request.input('precio_venta', sql.Decimal(10,2), precio_venta ?? 0);
+    request.input('precio_compra', sql.Decimal(10,2), precio_compra ?? 0);
+    request.input('id_categoria', sql.Int, id_categoria ?? null);
+    request.input('id_marca', sql.Int, id_marca ?? null);
+    request.input('url_imagen', sql.VarChar, url_imagen ?? null);
+    request.input('stock_minimo', sql.Int, stock_minimo ?? 5);
+    request.input('activo', sql.Bit, (typeof activo === 'boolean') ? activo : (activo === 1 ? true : true));
+    request.input('id_usuario_app', sql.Int, id_usuario_app ?? req.usuario.id_usuario);
+
+    try {
+      const spRes = await request.execute('sp_ActualizarProducto');
+      return res.status(200).json({ mensaje: 'Producto actualizado (SP)', id_producto_actualizado: spRes.recordset[0]?.id_producto_actualizado ?? id });
+    } catch (spErr) {
+      // SP no existe o falló: fallback a UPDATE manual
+      const updateQ = `UPDATE productos SET codigo_producto = @codigo_producto, nombre_producto = @nombre_producto,
+                        precio_venta = @precio_venta, precio_compra = @precio_compra, id_categoria = @id_categoria,
+                        id_marca = @id_marca, url_imagen = @url_imagen, stock_minimo = @stock_minimo, activo = @activo
+                        WHERE id_producto = @id_producto`;
+      await request.query(updateQ);
+      return res.status(200).json({ mensaje: 'Producto actualizado', id_producto_actualizado: id });
+    }
+
+  } catch (error) {
+    console.error('Error en PUT /api/productos/:id', error.message);
+    res.status(500).json({ error: 'Error al actualizar producto', detalle: error.message });
   }
 });
 
@@ -243,17 +343,18 @@ app.get('/api/inventario', authMiddleware, async (req, res) => {
     const countResult = await request.query(countQuery);
     const total = countResult.recordset[0].total || 0;
 
-    // Query paginada que une inventario y producto
-    const dataQuery = `
-      SELECT p.id_producto, p.codigo_producto, p.nombre_producto, p.precio_venta, p.precio_compra, p.stock,
-             inv.existencia_actual, inv.ultima_actualizacion, c.nombre_categoria, m.nombre_marca
-      FROM productos p
-      LEFT JOIN inventario inv ON inv.id_producto = p.id_producto
-      LEFT JOIN categorias c ON p.id_categoria = c.id_categoria
-      LEFT JOIN marcas m ON p.id_marca = m.id_marca
-      ${whereClause}
-      ORDER BY p.nombre_producto
-      OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY`;
+        // Query paginada que une inventario y producto
+        const dataQuery = `
+          SELECT p.id_producto, p.codigo_producto, p.nombre_producto, p.precio_venta, p.precio_compra, p.stock,
+            p.url_imagen, p.stock_minimo, p.activo,
+            inv.existencia_actual, inv.ultima_actualizacion, c.nombre_categoria, m.nombre_marca
+          FROM productos p
+          LEFT JOIN inventario inv ON inv.id_producto = p.id_producto
+          LEFT JOIN categorias c ON p.id_categoria = c.id_categoria
+          LEFT JOIN marcas m ON p.id_marca = m.id_marca
+          ${whereClause}
+          ORDER BY p.nombre_producto
+          OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY`;
 
     const dataResult = await request.query(dataQuery);
 
@@ -448,7 +549,7 @@ app.get('/api/clientes', authMiddleware, async (req, res) => {
     const total = countRes.recordset[0].total || 0;
 
     const dataQ = `
-      SELECT id_cliente, nombre_cliente, rfc, correo, telefono, direccion
+      SELECT id_cliente, nombre_cliente, rfc, email AS correo, telefono, direccion
       FROM clientes
       ${whereClause}
       ORDER BY nombre_cliente
@@ -473,16 +574,105 @@ app.post('/api/clientes', authMiddleware, requireRole('Administrador'), async (r
     request.input('correo', sql.VarChar, correo);
     request.input('telefono', sql.VarChar, telefono);
     request.input('direccion', sql.VarChar, direccion);
+    // pasar id del usuario de la sesión para auditoria si existe el SP
+    const idUsuarioApp = req.usuario && req.usuario.id_usuario ? req.usuario.id_usuario : null;
+    request.input('id_usuario_app', sql.Int, idUsuarioApp);
 
-    const insertQ = `INSERT INTO clientes (nombre_cliente, rfc, correo, telefono, direccion)
-                     OUTPUT INSERTED.id_cliente
-                     VALUES (@nombre_cliente, @rfc, @correo, @telefono, @direccion)`;
+    // Intentar ejecutar el stored procedure sp_CrearCliente si existe
+    try {
+      const spRes = await request.execute('sp_CrearCliente');
+      // si el SP devuelve un id en recordset, usarlo
+      if (spRes && spRes.recordset && spRes.recordset[0]) {
+        const id_created = spRes.recordset[0].id_cliente_creado || spRes.recordset[0].id_cliente || null;
+        return res.status(201).json({ mensaje: 'Cliente creado (SP)', id_cliente: id_created });
+      }
+      // si no hay recordset, devolver éxito genérico
+      return res.status(201).json({ mensaje: 'Cliente creado (SP)' });
+    } catch (spError) {
+      // Si el SP no existe, caer al INSERT directo. Si es otro error, loguearlo pero intentar fallback.
+      if (!spError.message || spError.message.toLowerCase().includes('could not find stored procedure')) {
+        // continuar a fallback
+      } else {
+        console.warn('sp_CrearCliente falló, intentando fallback INSERT:', spError.message);
+      }
+    }
+
+    // Fallback: INSERT directo si el SP no está disponible
+    const insertQ = `INSERT INTO clientes (nombre_cliente, rfc, email, telefono, direccion)
+             OUTPUT INSERTED.id_cliente
+             VALUES (@nombre_cliente, @rfc, @correo, @telefono, @direccion)`;
 
     const result = await request.query(insertQ);
     res.status(201).json({ mensaje: 'Cliente creado', id_cliente: result.recordset[0].id_cliente });
   } catch (error) {
     console.error('Error en POST /api/clientes:', error.message);
     res.status(500).json({ error: 'Error al crear cliente', detalle: error.message });
+  }
+});
+
+// ENDPOINT: Actualizar cliente (intenta SP sp_ActualizarCliente con id_usuario_app, fallback a UPDATE)
+app.put('/api/clientes/:id', authMiddleware, requireRole('Administrador'), async (req, res) => {
+  const id = parseInt(req.params.id);
+  const { nombre_cliente, rfc, correo, telefono, direccion } = req.body;
+  if (!nombre_cliente) return res.status(400).json({ error: 'Falta nombre_cliente' });
+
+  try {
+    const request = pool.request();
+    request.input('id_cliente', sql.Int, id);
+    request.input('nombre_cliente', sql.VarChar, nombre_cliente);
+    request.input('rfc', sql.VarChar, rfc);
+    request.input('correo', sql.VarChar, correo);
+    request.input('telefono', sql.VarChar, telefono);
+    request.input('direccion', sql.VarChar, direccion);
+    const idUsuarioApp = req.usuario && req.usuario.id_usuario ? req.usuario.id_usuario : null;
+    request.input('id_usuario_app', sql.Int, idUsuarioApp);
+
+    try {
+      const spRes = await request.execute('sp_ActualizarCliente');
+      return res.status(200).json({ mensaje: 'Cliente actualizado (SP)' });
+    } catch (spErr) {
+      if (!spErr.message || spErr.message.toLowerCase().includes('could not find stored procedure')) {
+        // fallback a UPDATE
+      } else {
+        console.warn('sp_ActualizarCliente falló, intentando fallback UPDATE:', spErr.message);
+      }
+    }
+
+    const updateQ = `UPDATE clientes SET nombre_cliente = @nombre_cliente, rfc = @rfc, email = @correo, telefono = @telefono, direccion = @direccion WHERE id_cliente = @id_cliente`;
+    await request.query(updateQ);
+    res.status(200).json({ mensaje: 'Cliente actualizado', id_cliente: id });
+  } catch (error) {
+    console.error('Error en PUT /api/clientes/:id', error.message);
+    res.status(500).json({ error: 'Error al actualizar cliente', detalle: error.message });
+  }
+});
+
+// ENDPOINT: Eliminar cliente (intenta SP sp_EliminarCliente con id_usuario_app, fallback a DELETE)
+app.delete('/api/clientes/:id', authMiddleware, requireRole('Administrador'), async (req, res) => {
+  const id = parseInt(req.params.id);
+  try {
+    const request = pool.request();
+    request.input('id_cliente', sql.Int, id);
+    const idUsuarioApp = req.usuario && req.usuario.id_usuario ? req.usuario.id_usuario : null;
+    request.input('id_usuario_app', sql.Int, idUsuarioApp);
+
+    try {
+      const spRes = await request.execute('sp_EliminarCliente');
+      return res.status(200).json({ mensaje: 'Cliente eliminado (SP)', id_cliente: id });
+    } catch (spErr) {
+      if (!spErr.message || spErr.message.toLowerCase().includes('could not find stored procedure')) {
+        // fallback a DELETE
+      } else {
+        console.warn('sp_EliminarCliente falló, intentando fallback DELETE:', spErr.message);
+      }
+    }
+
+    const delQ = `DELETE FROM clientes WHERE id_cliente = @id_cliente`;
+    await request.query(delQ);
+    res.status(200).json({ mensaje: 'Cliente eliminado', id_cliente: id });
+  } catch (error) {
+    console.error('Error en DELETE /api/clientes/:id', error.message);
+    res.status(500).json({ error: 'Error al eliminar cliente', detalle: error.message });
   }
 });
 
@@ -574,7 +764,7 @@ app.get('/api/ventas/history', authMiddleware, async (req, res) => {
     const dataQ = `
       SELECT v.*, u.nombre_usuario as usuario_app_nombre, c.nombre_cliente as cliente_nombre
       FROM ventas v
-      LEFT JOIN usuarios u ON u.id_usuario = v.id_usuario_app
+      LEFT JOIN usuarios u ON u.id_usuario = v.id_usuario
       LEFT JOIN clientes c ON c.id_cliente = v.id_cliente
       ${whereClause}
       ORDER BY v.fecha DESC
@@ -658,5 +848,21 @@ app.get('/api/marcas', authMiddleware, async (req, res) => {
   } catch (error) {
     console.error('Error en /api/marcas:', error.message);
     res.status(500).json({ error: 'Error al obtener marcas', detalle: error.message });
+  }
+});
+
+// ENDPOINT: Obtener logs de Database Mail (Admin)
+app.get('/api/mail/log', authMiddleware, requireRole('Administrador'), async (req, res) => {
+  try {
+    const request = pool.request();
+    // Devolver los últimos 20 items de la cola/historial
+    const q = `SELECT TOP 20 mailitem_id, subject, recipients, send_request_date, sent_status, last_mod_date, last_mod_user
+               FROM msdb.dbo.sysmail_allitems
+               ORDER BY send_request_date DESC`;
+    const result = await request.query(q);
+    res.status(200).json(result.recordset);
+  } catch (error) {
+    console.error('Error en /api/mail/log:', error.message);
+    res.status(500).json({ error: 'Error al obtener logs de mail', detalle: error.message });
   }
 });

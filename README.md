@@ -86,7 +86,13 @@ Sistema de Punto de Venta web desarrollado con Flutter (Dart), Node.js y SQL Ser
 
 ---
 
-## 📈 Estado del Proyecto
+**Cambios recientes en la Base de Datos (importante)**
 
-✅ **Versión actual:** Beta funcional  
-🛠️ En desarrollo continuo: optimización de reportes y módulos.
+- **Nuevos campos en `productos`**: se agregaron `url_imagen` (VARCHAR(500)), `activo` (BIT) y `stock_minimo` (INT). Estos campos permiten mostrar imágenes de producto en el frontend, ocultar productos deshabilitados y configurar un umbral individual para alertas de stock.
+
+- **Procedimientos y funciones añadidos/actualizados**:
+  - `sp_ObtenerProductos` ahora devuelve `url_imagen` y `stock_minimo` y filtra por `activo = 1`.
+  - `sp_ActualizarProducto` acepta nuevos parámetros `@url_imagen`, `@stock_minimo` y `@activo`.
+  - Nuevas funciones y procedimientos relacionados con reportes (`fn_CalcularMargen`, `sp_CorteDeCajaDia`, `sp_RegistrarPerdida`).
+
+- **Triggers y notificaciones**: se incluyó `tr_AlertaStockBajo` (ahora compara contra `stock_minimo` del producto) y un script `ConfigurarCorreo.sql` para configurar Database Mail. Antes de ejecutar `ConfigurarCorreo.sql`, revisa y reemplaza las credenciales en el script por valores seguros.

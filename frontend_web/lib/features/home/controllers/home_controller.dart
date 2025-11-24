@@ -14,6 +14,8 @@ import 'package:frontend_web/features/inventory/screens/movimientos_screen.dart'
 import 'package:frontend_web/features/bitacora/screens/bitacora_screen.dart';
 import 'package:frontend_web/features/catalog/screens/categorias_screen.dart';
 import 'package:frontend_web/features/catalog/screens/marcas_screen.dart';
+import 'dart:async';
+import 'package:frontend_web/core/models/services/pos_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -30,11 +32,22 @@ class _HomeScreenState extends State<HomeScreen> {
   double _ventasHoy = 0.0;
   int _stockCritico = 0;
   bool _heroHover = false;
+  final PosService _posService = PosService();
+  List<dynamic> _mailLog = [];
+  int? _lastMailId;
+  Timer? _mailTimer;
 
   @override
   void initState() {
     super.initState();
     _cargarDatosUsuario();
+    _startMailPolling();
+  }
+
+  @override
+  void dispose() {
+    _mailTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _cargarDatosUsuario() async {
@@ -45,6 +58,67 @@ class _HomeScreenState extends State<HomeScreen> {
       _rol = prefs.getString('usuario_rol') ?? 'Sin rol';
     });
     await _loadMetrics();
+  }
+
+  void _startMailPolling() {
+    // Poll mail log immediately and then every 30s
+    _checkMailLog();
+    _mailTimer = Timer.periodic(const Duration(seconds: 30), (_) => _checkMailLog());
+  }
+
+  Future<void> _checkMailLog() async {
+    try {
+      final logs = await _posService.getMailLog();
+      if (logs.isNotEmpty) {
+        final top = logs.first as Map<String, dynamic>;
+        final mailId = top['mailitem_id'] as int?;
+        if (_lastMailId == null) {
+          _lastMailId = mailId;
+        } else if (mailId != null && mailId != _lastMailId) {
+          // Nuevo correo enviado, notificar al usuario
+          _lastMailId = mailId;
+          if (mounted) {
+            final subject = top['subject'] ?? 'Notificación enviada';
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Correo enviado: $subject')));
+          }
+        }
+      }
+      setState(() => _mailLog = logs);
+    } catch (_) {
+      // Ignoramos errores de polling para no molestar
+    }
+  }
+
+  void _showMailLog() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Registros de correo (Database Mail)'),
+        content: SizedBox(
+          width: 600,
+          child: _mailLog.isEmpty
+              ? const Text('No hay registros recientes')
+              : ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: _mailLog.length,
+                  separatorBuilder: (_, __) => const Divider(height: 8),
+                  itemBuilder: (context, index) {
+                    final item = _mailLog[index] as Map<String, dynamic>;
+                    final subj = item['subject'] ?? '';
+                    final to = item['recipients'] ?? '';
+                    final date = item['send_request_date'] ?? '';
+                    final status = item['sent_status'] ?? '';
+                    return ListTile(
+                      title: Text(subj.toString(), overflow: TextOverflow.ellipsis),
+                      subtitle: Text('Para: $to\nFecha: $date'),
+                      trailing: Text(status.toString()),
+                    );
+                  },
+                ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cerrar'))],
+      ),
+    );
   }
 
   Future<void> _loadMetrics() async {
@@ -88,6 +162,10 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: Text('Bienvenido, $_nombre'),
         actions: [
+          Tooltip(
+            message: 'Logs de correo',
+            child: IconButton(icon: const Icon(Icons.mail_outline), onPressed: _showMailLog),
+          ),
           Tooltip(
             message: 'Cerrar Sesión',
             child: IconButton(icon: const Icon(Icons.logout), onPressed: _cerrarSesion),

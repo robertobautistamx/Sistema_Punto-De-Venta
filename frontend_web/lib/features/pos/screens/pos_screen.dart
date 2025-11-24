@@ -1,5 +1,5 @@
 // lib/features/pos/screens/pos_screen.dart
-
+// ignore_for_file: deprecated_member_use, unnecessary_import
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:frontend_web/core/models/cart_item_model.dart';
@@ -52,8 +52,9 @@ class _PosScreenState extends State<PosScreen> {
     try {
       final productos = await _posService.getProductos();
       setState(() {
-        _listaDeProductos = productos;
-        _productosFiltrados = productos;
+        // Asegurarnos de respetar el flag `activo` (aunque el SP ya filtra)
+        _listaDeProductos = productos.where((p) => p.activo).toList();
+        _productosFiltrados = _listaDeProductos;
         _isLoading = false;
       });
     } catch (e) {
@@ -147,7 +148,7 @@ class _PosScreenState extends State<PosScreen> {
 
     // 2. Preparar los datos para la API
     final total = _calcularTotal();
-    final metodoPago = 'Efectivo'; // Puedes cambiar esto por un Dropdown
+    final metodoPago = 'Efectivo'; 
 
     // Formatear el carrito al List<Map> que espera el backend
     final List<Map<String, dynamic>> detalleParaApi = _carrito.map((item) {
@@ -260,9 +261,31 @@ class _PosScreenState extends State<PosScreen> {
                 return Card(
                   margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                   child: ListTile(
+                    leading: producto.urlImagen != null && producto.urlImagen!.isNotEmpty
+                        ? CircleAvatar(
+                            backgroundImage: NetworkImage(producto.urlImagen!),
+                            radius: 24,
+                            backgroundColor: Colors.grey[200],
+                          )
+                        : CircleAvatar(
+                            radius: 24,
+                            backgroundColor: Colors.grey[200],
+                            child: const Icon(Icons.image_not_supported, color: Colors.grey),
+                          ),
                     title: Text(producto.nombreProducto),
-                    subtitle: Text(
-                      'Código: ${producto.codigoProducto} | Stock: ${producto.stock}',
+                    subtitle: Row(
+                      children: [
+                        Expanded(child: Text('Código: ${producto.codigoProducto}')),
+                        const SizedBox(width: 8),
+                        Text('Stock: ${producto.stock}'),
+                        const SizedBox(width: 6),
+                        // Indicador de stock bajo respecto a stockMinimo
+                        if (producto.stock <= producto.stockMinimo)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 6.0),
+                            child: Icon(Icons.warning_amber_rounded, color: Colors.red, size: 18),
+                          ),
+                      ],
                     ),
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
